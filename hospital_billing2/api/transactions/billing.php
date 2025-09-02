@@ -52,7 +52,13 @@ class BillingAPI {
     function getAllBillings($admissionId = null) {
         try {
             $conn = $this->connect();
-            $sql = "SELECT b.*, bc.name as category_name 
+            $sql = "SELECT b.*, bc.name as category_name, b.auto_calculated, b.reference_id, b.reference_type,
+                   CASE 
+                       WHEN b.reference_type = 'room' THEN CONCAT('Room #', b.reference_id)
+                       WHEN b.reference_type = 'lab_test' THEN (SELECT name FROM Lab_Test WHERE testid = b.reference_id)
+                       WHEN b.reference_type = 'medicine' THEN (SELECT COALESCE(brand_name, name) FROM Medicine WHERE medicineid = b.reference_id)
+                       ELSE NULL
+                   END as reference_name
                    FROM Billing b 
                    JOIN Billing_Category bc ON b.billing_categoryid = bc.billing_categoryid";
             
@@ -66,9 +72,9 @@ class BillingAPI {
             
             $stmt = $conn->prepare($sql);
             $stmt->execute($params);
-            $this->respond($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+            $this->respond(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []]);
         } catch (Exception $e) {
-            $this->respond(["error" => $e->getMessage()], 500);
+            $this->respond(["success" => false, "error" => $e->getMessage()], 500);
         }
     }
 
@@ -104,6 +110,9 @@ class BillingAPI {
             $quantity = $data['quantity'] ?? 1;
             $unit_price = $data['unit_price'];
             $total_amount = $data['total_amount'] ?? ($quantity * $unit_price);
+            $reference_id = $data['reference_id'] ?? null;
+            $reference_type = $data['reference_type'] ?? 'other';
+            $auto_calculated = $data['auto_calculated'] ?? 0;
 
             // Validate foreign keys
             $conn = $this->connect();
@@ -123,8 +132,8 @@ class BillingAPI {
             }
 
             $stmt = $conn->prepare("
-                INSERT INTO Billing (admissionid, billing_categoryid, description, quantity, unit_price, total_amount, billing_date)
-                VALUES (:admissionid, :billing_categoryid, :description, :quantity, :unit_price, :total_amount, NOW())
+                INSERT INTO Billing (admissionid, billing_categoryid, description, quantity, unit_price, total_amount, billing_date, reference_id, reference_type, auto_calculated)
+                VALUES (:admissionid, :billing_categoryid, :description, :quantity, :unit_price, :total_amount, NOW(), :reference_id, :reference_type, :auto_calculated)
             ");
             $stmt->execute([
                 ":admissionid" => $admissionid,
@@ -132,7 +141,10 @@ class BillingAPI {
                 ":description" => $description,
                 ":quantity" => $quantity,
                 ":unit_price" => $unit_price,
-                ":total_amount" => $total_amount
+                ":total_amount" => $total_amount,
+                ":reference_id" => $reference_id,
+                ":reference_type" => $reference_type,
+                ":auto_calculated" => $auto_calculated
             ]);
 
             $this->respond([
@@ -156,6 +168,9 @@ class BillingAPI {
             $quantity = $data['quantity'] ?? 1;
             $unit_price = $data['unit_price'];
             $total_amount = $data['total_amount'] ?? ($quantity * $unit_price);
+            $reference_id = $data['reference_id'] ?? null;
+            $reference_type = $data['reference_type'] ?? 'other';
+            $auto_calculated = $data['auto_calculated'] ?? 0;
 
             // Validate foreign keys
             $conn = $this->connect();
@@ -185,7 +200,9 @@ class BillingAPI {
                 UPDATE Billing
                 SET admissionid = :admissionid, billing_categoryid = :billing_categoryid, 
                     description = :description, quantity = :quantity, 
-                    unit_price = :unit_price, total_amount = :total_amount
+                    unit_price = :unit_price, total_amount = :total_amount,
+                    reference_id = :reference_id, reference_type = :reference_type,
+                    auto_calculated = :auto_calculated
                 WHERE billingid = :billingid
             ");
             $stmt->execute([
@@ -195,6 +212,9 @@ class BillingAPI {
                 ":quantity" => $quantity,
                 ":unit_price" => $unit_price,
                 ":total_amount" => $total_amount,
+                ":reference_id" => $reference_id,
+                ":reference_type" => $reference_type,
+                ":auto_calculated" => $auto_calculated,
                 ":billingid" => $billingid
             ]);
 
@@ -399,6 +419,201 @@ class BillingAPI {
             $this->respond(["error" => $e->getMessage()], 500);
         }
     }
+    
+    function generateAutomaticBilling($admissionId) {
+        try {
+            if (!$admissionId) {
+                $this->respond(["error" => "Admission ID required"], 422);
+                return;
+            }
+            
+            $conn = $this->connect();
+            
+            // Check if admission exists
+            $stmt = $conn->prepare("SELECT admissionid FROM Admission WHERE admissionid = :admissionid AND deleted_at IS NULL");
+            $stmt->execute([":admissionid" => $admissionId]);
+            if (!$stmt->fetch()) {
+                $this->respond(["success" => false, "error" => "Invalid admission ID"], 422);
+                return;
+            }
+            
+            // Generate room billing
+            $this->generateRoomBilling($admissionId, $conn);
+            
+            // Generate lab test billing
+            $this->generateLabTestBilling($admissionId, $conn);
+            
+            // Generate medicine billing
+            $this->generateMedicineBilling($admissionId, $conn);
+            
+            $this->respond(["success" => true, "message" => "Automatic billing generated successfully"]);
+        } catch (Exception $e) {
+            $this->respond(["success" => false, "error" => $e->getMessage()], 500);
+        }
+    }
+    
+    private function generateRoomBilling($admissionId, $conn) {
+        // Get room assignment details
+        $sql = "SELECT 
+                    ra.room_no,
+                    rc.rate_per_day,
+                    ra.start_date,
+                    ra.end_date,
+                    CASE 
+                        WHEN ra.end_date IS NULL THEN DATEDIFF(CURDATE(), ra.start_date) + 1
+                        ELSE DATEDIFF(ra.end_date, ra.start_date) + 1
+                    END as days_occupied
+                FROM Room_Assignment ra
+                JOIN Room r ON ra.room_no = r.room_no
+                JOIN Room_Category rc ON r.categoryid = rc.categoryid
+                WHERE ra.admissionid = :admissionid AND ra.deleted_at IS NULL
+                ORDER BY ra.start_date DESC LIMIT 1";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([":admissionid" => $admissionId]);
+        $roomData = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($roomData && $roomData['days_occupied'] > 0 && $roomData['rate_per_day'] > 0) {
+            $roomCost = $roomData['days_occupied'] * $roomData['rate_per_day'];
+            
+            // Check if room billing already exists
+            $checkSql = "SELECT billingid FROM Billing 
+                         WHERE admissionid = :admissionid 
+                         AND reference_type = 'room' 
+                         AND reference_id = :room_no";
+            $checkStmt = $conn->prepare($checkSql);
+            $checkStmt->execute([
+                ":admissionid" => $admissionId,
+                ":room_no" => $roomData['room_no']
+            ]);
+            
+            if (!$checkStmt->fetch()) {
+                // Insert new room billing
+                $insertSql = "INSERT INTO Billing 
+                              (admissionid, billing_categoryid, description, quantity, unit_price, 
+                               total_amount, reference_id, reference_type, auto_calculated, billing_date)
+                              VALUES 
+                              (:admissionid, 1, :description, :quantity, :unit_price, 
+                               :total_amount, :reference_id, 'room', 1, NOW())";
+                
+                $insertStmt = $conn->prepare($insertSql);
+                $insertStmt->execute([
+                    ":admissionid" => $admissionId,
+                    ":description" => "Room accommodation for {$roomData['days_occupied']} days",
+                    ":quantity" => $roomData['days_occupied'],
+                    ":unit_price" => $roomData['rate_per_day'],
+                    ":total_amount" => $roomCost,
+                    ":reference_id" => $roomData['room_no']
+                ]);
+            }
+        }
+    }
+    
+    private function generateLabTestBilling($admissionId, $conn) {
+        // Get lab test details
+        $sql = "SELECT 
+                    lr.lab_requestid,
+                    lr.testid,
+                    lt.name as test_name,
+                    lt.price,
+                    ltc.handling_fee,
+                    (lt.price + ltc.handling_fee) as total_cost
+                FROM Lab_Request lr
+                JOIN Lab_Test lt ON lr.testid = lt.testid
+                JOIN Lab_Test_Category ltc ON lt.categoryid = ltc.labtestcatid
+                WHERE lr.admissionid = :admissionid 
+                AND lr.status = 'Completed'
+                AND lr.deleted_at IS NULL";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([":admissionid" => $admissionId]);
+        $labTests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        foreach ($labTests as $test) {
+            // Check if lab test billing already exists
+            $checkSql = "SELECT billingid FROM Billing 
+                         WHERE admissionid = :admissionid 
+                         AND reference_type = 'lab_test' 
+                         AND reference_id = :testid";
+            $checkStmt = $conn->prepare($checkSql);
+            $checkStmt->execute([
+                ":admissionid" => $admissionId,
+                ":testid" => $test['testid']
+            ]);
+            
+            if (!$checkStmt->fetch()) {
+                // Insert new lab test billing
+                $insertSql = "INSERT INTO Billing 
+                              (admissionid, billing_categoryid, description, quantity, unit_price, 
+                               total_amount, reference_id, reference_type, auto_calculated, billing_date)
+                              VALUES 
+                              (:admissionid, 2, :description, 1, :unit_price, 
+                               :total_amount, :reference_id, 'lab_test', 1, NOW())";
+                
+                $insertStmt = $conn->prepare($insertSql);
+                $insertStmt->execute([
+                    ":admissionid" => $admissionId,
+                    ":description" => "Lab Test: {$test['test_name']}",
+                    ":unit_price" => $test['total_cost'],
+                    ":total_amount" => $test['total_cost'],
+                    ":reference_id" => $test['testid']
+                ]);
+            }
+        }
+    }
+    
+    private function generateMedicineBilling($admissionId, $conn) {
+        // Get medicine details
+        $sql = "SELECT 
+                    pr.prescriptionid,
+                    pr.medicineid,
+                    COALESCE(m.brand_name, m.name) as medicine_name,
+                    m.price as unit_price,
+                    pr.quantity,
+                    (m.price * pr.quantity) as total_cost
+                FROM Prescription pr
+                JOIN Medicine m ON pr.medicineid = m.medicineid
+                WHERE pr.admissionid = :admissionid 
+                AND pr.status = 'Dispensed'
+                AND m.is_deleted = 0";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([":admissionid" => $admissionId]);
+        $medicines = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        foreach ($medicines as $medicine) {
+            // Check if medicine billing already exists
+            $checkSql = "SELECT billingid FROM Billing 
+                         WHERE admissionid = :admissionid 
+                         AND reference_type = 'medicine' 
+                         AND reference_id = :medicineid";
+            $checkStmt = $conn->prepare($checkSql);
+            $checkStmt->execute([
+                ":admissionid" => $admissionId,
+                ":medicineid" => $medicine['medicineid']
+            ]);
+            
+            if (!$checkStmt->fetch()) {
+                // Insert new medicine billing
+                $insertSql = "INSERT INTO Billing 
+                              (admissionid, billing_categoryid, description, quantity, unit_price, 
+                               total_amount, reference_id, reference_type, auto_calculated, billing_date)
+                              VALUES 
+                              (:admissionid, 3, :description, :quantity, :unit_price, 
+                               :total_amount, :reference_id, 'medicine', 1, NOW())";
+                
+                $insertStmt = $conn->prepare($insertSql);
+                $insertStmt->execute([
+                    ":admissionid" => $admissionId,
+                    ":description" => "Medicine: {$medicine['medicine_name']}",
+                    ":quantity" => $medicine['quantity'],
+                    ":unit_price" => $medicine['unit_price'],
+                    ":total_amount" => $medicine['total_cost'],
+                    ":reference_id" => $medicine['medicineid']
+                ]);
+            }
+        }
+    }
 }
 
 // --- Entry point ---
@@ -445,6 +660,9 @@ switch ($operation) {
         break;
     case 'getRoomAssignment':
         $billing->getRoomAssignment($admissionid);
+        break;
+    case 'generateAutomaticBilling':
+        $billing->generateAutomaticBilling($admissionid);
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);

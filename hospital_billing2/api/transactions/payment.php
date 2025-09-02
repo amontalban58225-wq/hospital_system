@@ -114,8 +114,8 @@ class PaymentAPI {
                 }
             }
             
-            $sql = "INSERT INTO Payment (admissionid, amount, date, method, remarks, insuranceid) 
-                    VALUES (:admissionid, :amount, NOW(), :method, :remarks, :insuranceid)";
+            $sql = "INSERT INTO Payment (admissionid, amount, date, method, remarks, insuranceid, insurance_coverage) 
+                    VALUES (:admissionid, :amount, NOW(), :method, :remarks, :insuranceid, :insurance_coverage)";
             
             $stmt = $conn->prepare($sql);
             $stmt->execute([
@@ -123,7 +123,8 @@ class PaymentAPI {
                 ":amount" => $data['amount'],
                 ":method" => $data['method'],
                 ":remarks" => $data['remarks'] ?? null,
-                ":insuranceid" => $data['insuranceid'] ?? null
+                ":insuranceid" => $data['insuranceid'] ?? null,
+                ":insurance_coverage" => $data['insurance_coverage'] ?? null
             ]);
             
             $this->respond([
@@ -162,7 +163,8 @@ class PaymentAPI {
                     SET amount = :amount, 
                         method = :method, 
                         remarks = :remarks, 
-                        insuranceid = :insuranceid 
+                        insuranceid = :insuranceid, 
+                        insurance_coverage = :insurance_coverage 
                     WHERE paymentid = :id";
             
             $stmt = $conn->prepare($sql);
@@ -171,7 +173,8 @@ class PaymentAPI {
                 ":amount" => $data['amount'],
                 ":method" => $data['method'],
                 ":remarks" => $data['remarks'] ?? null,
-                ":insuranceid" => $data['insuranceid'] ?? null
+                ":insuranceid" => $data['insuranceid'] ?? null,
+                ":insurance_coverage" => $data['insurance_coverage'] ?? null
             ]);
             
             $this->respond([

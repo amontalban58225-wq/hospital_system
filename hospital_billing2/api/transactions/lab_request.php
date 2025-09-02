@@ -29,7 +29,7 @@ class LabRequestAPI {
             $conn = $this->connect();
             $stmt = $conn->query("
                 SELECT lr.lab_requestid, lr.admissionid, lr.requestedBy, lr.testid, lr.status,
-                       p.fullname AS patient_name,
+                       CONCAT(p.lastname, ', ', p.firstname, ' ', IFNULL(p.middlename, ''), ' ', IFNULL(p.suffix, '')) AS patient_name,
                        d.fullname AS doctor_name,
                        lt.name AS test_name,
                        lt.price AS test_price,
@@ -58,7 +58,7 @@ class LabRequestAPI {
             $conn = $this->connect();
             $stmt = $conn->prepare("
                 SELECT lr.lab_requestid, lr.admissionid, lr.requestedBy, lr.testid, lr.status,
-                       p.fullname AS patient_name,
+                       CONCAT(p.lastname, ', ', p.firstname, ' ', IFNULL(p.middlename, ''), ' ', IFNULL(p.suffix, '')) AS patient_name,
                        d.fullname AS doctor_name,
                        lt.name AS test_name,
                        lt.price AS test_price,

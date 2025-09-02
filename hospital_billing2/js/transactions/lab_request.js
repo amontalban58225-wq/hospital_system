@@ -73,7 +73,7 @@ class LabRequestManager {
 
   async loadTests() {
     try {
-      const res = await axios.get('http://localhost/hospital_billing2/api/lab_test.php', {
+      const res = await axios.get('http://localhost:8000/api/lab_test.php', {
         params: { operation: 'getAllTests' }
       });
       if (res.data.error) throw new Error(res.data.error);

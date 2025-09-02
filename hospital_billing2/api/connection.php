@@ -1,7 +1,7 @@
 <?php
 class Database {
     private $host = "localhost";
-    private $db_name = "hospital_db";  // Your actual DB name here
+    private $db_name = "test/";  // Using test database as specified by user
     private $username = "root";         // Your DB user
     private $password = "";             // Your DB password
     private $conn;

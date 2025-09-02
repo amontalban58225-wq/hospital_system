@@ -9,7 +9,7 @@ class PaymentManager {
     this.payments = [];
     this.billings = [];
     this.selectedAdmissionId = null;
-    
+
     this.init();
   }
 
@@ -71,18 +71,18 @@ class PaymentManager {
       const res = await axios.get(this.admissionApiUrl, {
         params: { operation: 'getAllAdmissions' }
       });
-      
+
       if (res.data.error) throw new Error(res.data.error);
-      
+
       this.admissions = Array.isArray(res.data) ? res.data : [];
       const selectEl = document.getElementById('admissionSelect');
-      
+
       if (this.admissions.length === 0) {
         selectEl.innerHTML = '<option value="">No admissions found</option>';
         return;
       }
-      
-      selectEl.innerHTML = '<option value="">-- Select Admission --</option>' + 
+
+      selectEl.innerHTML = '<option value="">-- Select Admission --</option>' +
         this.admissions.map(a => `
           <option value="${a.admissionid}">
             #${a.admissionid} - ${a.patient_name} (${new Date(a.admission_date).toLocaleDateString()})
@@ -99,9 +99,9 @@ class PaymentManager {
       const res = await axios.get(this.insuranceApiUrl, {
         params: { operation: 'getAllInsuranceProviders' }
       });
-      
+
       if (res.data.error) throw new Error(res.data.error);
-      
+
       this.insuranceProviders = Array.isArray(res.data) ? res.data : [];
     } catch (err) {
       console.error('Error loading insurance providers:', err);
@@ -111,17 +111,17 @@ class PaymentManager {
 
   async loadPayments() {
     if (!this.selectedAdmissionId) return;
-    
+
     try {
       const res = await axios.get(this.baseApiUrl, {
-        params: { 
+        params: {
           operation: 'getPaymentsByAdmission',
-          admissionid: this.selectedAdmissionId 
+          admissionid: this.selectedAdmissionId
         }
       });
-      
+
       if (res.data.error) throw new Error(res.data.error);
-      
+
       this.payments = Array.isArray(res.data) ? res.data : [];
       this.renderPaymentsTable();
     } catch (err) {
@@ -133,17 +133,17 @@ class PaymentManager {
 
   async loadBillings() {
     if (!this.selectedAdmissionId) return;
-    
+
     try {
       const res = await axios.get(this.billingApiUrl, {
-        params: { 
+        params: {
           operation: 'getAllBillings',
-          admissionid: this.selectedAdmissionId 
+          admissionid: this.selectedAdmissionId
         }
       });
-      
+
       if (res.data.error) throw new Error(res.data.error);
-      
+
       this.billings = Array.isArray(res.data) ? res.data : [];
     } catch (err) {
       console.error('Error loading billings:', err);
@@ -157,7 +157,7 @@ class PaymentManager {
 
     if (!this.payments.length) {
       tbody.innerHTML = `
-        <tr><td colspan="7" class="text-center text-muted py-3">No payment records found.</td></tr>`;
+        <tr><td colspan="8" class="text-center text-muted py-3">No payment records found.</td></tr>`;
       return;
     }
 
@@ -168,6 +168,7 @@ class PaymentManager {
         <td class="text-end">₱${this.formatCurrency(p.amount)}</td>
         <td>${p.method || '-'}</td>
         <td>${p.insurance_name || 'Cash'}</td>
+        <td class="text-end">${p.insurance_coverage ? '₱' + this.formatCurrency(p.insurance_coverage) : '-'}</td>
         <td>${p.remarks || '-'}</td>
         <td>
           <div style="display:flex; gap:8px; flex-wrap:nowrap;">
@@ -188,7 +189,7 @@ class PaymentManager {
 
     if (!this.payments || !this.payments.length) {
       tbody.innerHTML = `
-        <tr><td colspan="5" class="text-center text-muted py-3">No payment data available.</td></tr>`;
+        <tr><td colspan="6" class="text-center text-muted py-3">No payment data available.</td></tr>`;
       return;
     }
 
@@ -198,6 +199,7 @@ class PaymentManager {
         <td class="text-end">₱${this.formatCurrency(p.amount)}</td>
         <td>${p.method || '-'}</td>
         <td>${p.insurance_name || 'Cash'}</td>
+        <td class="text-end">${p.insurance_coverage ? '₱' + this.formatCurrency(p.insurance_coverage) : '-'}</td>
         <td>${p.remarks || '-'}</td>
       </tr>`).join('');
   }
@@ -208,7 +210,7 @@ class PaymentManager {
     const remaining = totalBilling - totalPaid;
 
     document.getElementById('totalPaid').textContent = `Total Paid: ₱${this.formatCurrency(totalPaid)}`;
-    
+
     // Update badge colors based on remaining balance
     const remainingBadge = document.getElementById('remainingBalance');
     if (remaining <= 0) {
@@ -228,10 +230,10 @@ class PaymentManager {
       document.getElementById('patientInfo').innerHTML = '';
       return;
     }
-    
+
     const admission = this.admissions.find(a => a.admissionid == this.selectedAdmissionId);
     if (!admission) return;
-    
+
     document.getElementById('patientInfo').innerHTML = `
       <strong>Patient:</strong> ${admission.patient_name}<br>
       <strong>Admission Date:</strong> ${new Date(admission.admission_date).toLocaleDateString()}<br>
@@ -247,7 +249,7 @@ class PaymentManager {
     if (mode === 'view') {
       const payment = this.payments.find(p => String(p.paymentid) === String(paymentId));
       if (!payment) return;
-      
+
       title = 'View Payment';
       body = `
         <p><strong>Amount:</strong> ₱${this.formatCurrency(payment.amount)}</p>
@@ -267,7 +269,7 @@ class PaymentManager {
             <label class="form-label">Amount</label>
             <div class="input-group">
               <span class="input-group-text">₱</span>
-              <input type="number" id="amount" class="form-control" step="0.01" min="0.01" required 
+              <input type="number" id="amount" class="form-control" step="0.01" min="0.01" required
                      value="${paymentId ? this.payments.find(p => String(p.paymentid) === String(paymentId))?.amount || '' : ''}" />
             </div>
             <div class="invalid-feedback">Please enter a valid amount.</div>
@@ -378,6 +380,41 @@ class PaymentManager {
       form.classList.add('was-validated');
       return;
     }
+    
+    // Get insurance provider if selected
+    const insuranceId = document.getElementById('insuranceId').value || null;
+    let insuranceProvider = null;
+    let coverageAmount = 0;
+    let patientAmount = 0;
+    
+    // Calculate insurance coverage if applicable
+    if (insuranceId) {
+      insuranceProvider = this.insuranceProviders.find(ins => ins.insuranceid == insuranceId);
+      
+      if (insuranceProvider) {
+        // Get total billing amount for this admission
+        const totalBilling = this.billings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+        
+        // Calculate coverage amount based on percentage
+        const coveragePercent = parseFloat(insuranceProvider.coverage_percent) || 0;
+        coverageAmount = totalBilling * (coveragePercent / 100);
+        
+        // Calculate remaining amount to be paid by patient
+        const totalPaid = this.payments.reduce((sum, p) => {
+          // Don't include the current payment if we're editing
+          if (mode === 'edit' && p.paymentid == paymentId) return sum;
+          return sum + parseFloat(p.amount || 0);
+        }, 0);
+        
+        patientAmount = totalBilling - coverageAmount - totalPaid;
+        
+        // Ensure we don't overpay
+        if (patientAmount < 0) patientAmount = 0;
+        
+        // Auto-fill the amount field with the calculated patient amount
+        document.getElementById('amount').value = patientAmount.toFixed(2);
+      }
+    }
 
     const paymentId = document.getElementById('paymentId').value || null;
     const data = {
@@ -385,8 +422,9 @@ class PaymentManager {
       admissionid: this.selectedAdmissionId,
       amount: document.getElementById('amount').value,
       method: document.getElementById('paymentMethod').value,
-      insuranceid: document.getElementById('insuranceId').value || null,
-      remarks: document.getElementById('remarks').value
+      insuranceid: insuranceId,
+      remarks: document.getElementById('remarks').value,
+      insurance_coverage: insuranceId ? coverageAmount.toFixed(2) : null
     };
 
     try {
@@ -394,9 +432,9 @@ class PaymentManager {
         operation: mode === 'add' ? 'insertPayment' : 'updatePayment',
         ...data
       });
-      
+
       if (res.data.success === false) throw new Error(res.data.error);
-      
+
       this.showAlert(`Payment ${mode === 'edit' ? 'updated' : 'added'} successfully!`, 'success');
       modal.hide();
       await this.loadPayments();
@@ -412,9 +450,9 @@ class PaymentManager {
         operation: 'deletePayment',
         paymentid: paymentId
       });
-      
+
       if (res.data.success === false) throw new Error(res.data.error);
-      
+
       this.showAlert('Payment deleted successfully!', 'success');
       modal.hide();
       await this.loadPayments();

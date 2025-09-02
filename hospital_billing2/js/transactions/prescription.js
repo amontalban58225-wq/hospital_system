@@ -1,6 +1,6 @@
 /* global axios, bootstrap */
 
-const BASE_API_URL = 'http://localhost/hospital_billing2/api/';
+const BASE_API_URL = 'http://localhost/hospital_billing2/api/';     
 const TRANSACTIONS_API_URL = BASE_API_URL + 'transactions/';
 
 class PrescriptionManager {

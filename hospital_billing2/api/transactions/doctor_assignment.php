@@ -38,7 +38,7 @@ class DoctorAssignment {
     public function getAssignments() {
         $sql = "SELECT
                     da.assignmentid, da.admissionid, da.doctorid, da.role, da.notes,
-                    p.fullname AS patient_name,
+                    CONCAT(p.lastname, ', ', p.firstname, ' ', IFNULL(p.middlename, ''), ' ', IFNULL(p.suffix, '')) AS patient_name,
                     d.fullname AS doctor_name
                 FROM Doctor_Assignment da
                 LEFT JOIN Admission a ON da.admissionid = a.admissionid

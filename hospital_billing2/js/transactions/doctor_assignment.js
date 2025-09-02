@@ -41,7 +41,7 @@ class DoctorAssignmentManager {
 
   async loadAdmissions() {
     try {
-      const res = await axios.get('http://localhost/hospital_billing2/api/transactions/admission.php', { params: { operation: 'getActiveAdmissions' } });
+      const res = await axios.get('http://localhost:8000/api/transactions/admission.php', { params: { operation: 'getActiveAdmissions' } });
       this.admissions = Array.isArray(res.data) ? res.data : [];
     } catch (e) {
       console.error('Failed to load admissions', e);

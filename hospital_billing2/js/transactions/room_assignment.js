@@ -24,11 +24,7 @@ class RoomAssignmentManager {
     const addBtn = document.getElementById("addAssignmentBtn");
     if (addBtn) {
       addBtn.addEventListener("click", () => {
-        const form = document.getElementById("assignmentForm");
-        form.reset();
-        form.classList.remove("was-validated");
-        document.getElementById("assignmentId").value = "";
-        new bootstrap.Modal(document.getElementById("assignmentModal")).show();
+        this.openModal('add');
       });
     }
 
@@ -130,12 +126,18 @@ class RoomAssignmentManager {
 
     tbody.innerHTML = this.assignments
       .map(
-        (a) => `
-      <tr>
+        (a) => {
+          // Determine status based on end_date
+          const status = a.end_date ? 'Completed' : 'Active';
+          const statusClass = a.end_date ? 'bg-completed' : 'bg-active';
+
+          return `
+      <tr class="fade-row">
         <td><strong>${this.escape(a.patient_name || "Unknown")}</strong></td>
         <td><strong>${this.escape(a.room_no)}</strong> (${this.escape(a.category_name || "Unknown")})</td>
-        <td>${this.escape(a.start_date || "")}</td>
-    
+        <td>${this.formatDate(a.start_date)}</td>
+        <td>${a.end_date ? this.formatDate(a.end_date) : '<span class="text-muted">—</span>'}</td>
+        <td><span class="badge ${statusClass}">${status}</span></td>
         <td>
           <div class="d-flex gap-2 flex-nowrap">
             <button class="btn btn-sm btn-info" title="View Assignment" data-id="${this.escape(a.assignmentid)}" data-action="view">
@@ -150,9 +152,63 @@ class RoomAssignmentManager {
           </div>
         </td>
       </tr>
-    `
+    `;
+        }
       )
       .join("");
+  }
+
+  formatDate(dateString) {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString; // Return original if invalid
+
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+
+  openModal(mode, item = null) {
+    const form = document.getElementById("assignmentForm");
+    form.reset();
+    form.classList.remove("was-validated");
+
+    // Set modal header color based on mode
+    const modalHeader = document.querySelector('#assignmentModal .modal-header');
+    if (modalHeader) {
+      // Remove existing background classes
+      modalHeader.classList.remove('bg-primary', 'bg-success', 'bg-warning');
+
+      // Add appropriate class based on mode
+      if (mode === 'add') {
+        modalHeader.classList.add('bg-success');
+        document.querySelector('#assignmentModal .modal-title').innerHTML = '<i class="bi bi-plus-circle"></i> Add Room Assignment';
+        document.getElementById('saveBtn').textContent = 'Add Assignment';
+      } else if (mode === 'edit') {
+        modalHeader.classList.add('bg-warning');
+        document.querySelector('#assignmentModal .modal-title').innerHTML = '<i class="bi bi-pencil-square"></i> Edit Room Assignment';
+        document.getElementById('saveBtn').textContent = 'Update Assignment';
+      }
+    }
+
+    // If editing, populate form with item data
+    if (mode === 'edit' && item) {
+      document.getElementById("assignmentId").value = item.assignmentid;
+      document.getElementById("admissionSelect").value = item.admissionid;
+      document.getElementById("roomSelect").value = item.room_no;
+
+      const startDate = item.start_date ? String(item.start_date).split(" ")[0] : "";
+      document.getElementById("assignedDate").value = startDate;
+
+      const endDate = item.end_date ? String(item.end_date).split(" ")[0] : "";
+      document.getElementById("endDate").value = endDate;
+    } else {
+      document.getElementById("assignmentId").value = "";
+    }
+
+    new bootstrap.Modal(document.getElementById("assignmentModal")).show();
   }
 
   async saveAssignment() {
@@ -162,15 +218,28 @@ class RoomAssignmentManager {
       return;
     }
 
-    const assignmentId = document.getElementById("assignmentId").value;
+    // Validate that end date is after start date if both are provided
     const startDateInput = document.getElementById("assignedDate").value;
+    const endDateInput = document.getElementById("endDate").value;
+
+    if (startDateInput && endDateInput && new Date(endDateInput) < new Date(startDateInput)) {
+      document.getElementById("endDate").setCustomValidity("End date must be after start date");
+      form.classList.add("was-validated");
+      return;
+    } else {
+      document.getElementById("endDate").setCustomValidity("");
+    }
+
+    const assignmentId = document.getElementById("assignmentId").value;
     const startDate = startDateInput ? `${startDateInput} 00:00:00` : null;
+    const endDate = endDateInput ? `${endDateInput} 23:59:59` : null;
 
     const data = {
       assignmentid: assignmentId || null,
       admissionid: document.getElementById("admissionSelect").value,
       room_no: document.getElementById("roomSelect").value,
       start_date: startDate,
+      end_date: endDate
     };
 
     if (!data.admissionid || !data.room_no) {
@@ -192,61 +261,107 @@ class RoomAssignmentManager {
       form.classList.remove("was-validated");
       form.reset();
       await Promise.all([this.loadAssignments(), this.loadRooms()]);
+
+      // Show success message
+      this.showAlert(`Room assignment ${assignmentId ? 'updated' : 'added'} successfully!`, 'success');
     } catch (err) {
       console.error("Save failed:", err?.response?.data || err.message);
       const serverMsg = err?.response?.data?.error || err?.response?.data || err.message;
-      alert("Error saving assignment: " + JSON.stringify(serverMsg));
+      this.showAlert("Error saving assignment: " + JSON.stringify(serverMsg), 'danger');
     }
   }
 
   editAssignment(id) {
     const assignment = this.assignments.find((a) => a.assignmentid == id);
     if (!assignment) return;
-
-    const form = document.getElementById("assignmentForm");
-    form.classList.remove("was-validated");
-
-    document.getElementById("assignmentId").value = assignment.assignmentid;
-    document.getElementById("admissionSelect").value = assignment.admissionid;
-    document.getElementById("roomSelect").value = assignment.room_no;
-
-    const dateValue = assignment.start_date ? String(assignment.start_date).split(" ")[0] : "";
-    document.getElementById("assignedDate").value = dateValue;
-
-    new bootstrap.Modal(document.getElementById("assignmentModal")).show();
+    this.openModal('edit', assignment);
   }
 
   async deleteAssignment(id) {
-    if (!confirm("Are you sure you want to delete this assignment?")) return;
+    // Create a confirmation modal instead of using confirm()
+    const assignment = this.assignments.find((a) => a.assignmentid == id);
+    if (!assignment) return;
 
-    try {
-      // find room_no for this assignment to pass? our API only needs assignmentid
-      await axios.delete(this.apiUrl, {
-        data: { assignmentid: id },
-        headers: { "Content-Type": "application/json" },
-      });
+    // Remove any existing delete modal
+    document.querySelectorAll('#deleteModal').forEach(m => m.remove());
 
-      await Promise.all([this.loadAssignments(), this.loadRooms()]);
-    } catch (err) {
-      console.error("Delete failed:", err?.response?.data || err.message);
-      const serverMsg = err?.response?.data?.error || err?.response?.data || err.message;
-      alert("Error deleting assignment: " + JSON.stringify(serverMsg));
-    }
+    const modalHtml = `
+      <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content animate__animated animate__fadeIn">
+            <div class="modal-header bg-danger text-white">
+              <h5 class="modal-title"><i class="bi bi-trash"></i> Confirm Delete</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <p>Are you sure you want to delete the room assignment for:</p>
+              <p><strong>Patient:</strong> ${this.escape(assignment.patient_name || 'Unknown')}</p>
+              <p><strong>Room:</strong> ${this.escape(assignment.room_no)} (${this.escape(assignment.category_name || 'Unknown')})</p>
+              <p><strong>Start Date:</strong> ${this.formatDate(assignment.start_date)}</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete Assignment</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    const modalEl = document.getElementById('deleteModal');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+      try {
+        await axios.delete(this.apiUrl, {
+          data: { assignmentid: id },
+          headers: { "Content-Type": "application/json" },
+        });
+
+        modal.hide();
+        await Promise.all([this.loadAssignments(), this.loadRooms()]);
+        this.showAlert('Room assignment deleted successfully!', 'success');
+      } catch (err) {
+        console.error("Delete failed:", err?.response?.data || err.message);
+        const serverMsg = err?.response?.data?.error || err?.response?.data || err.message;
+        this.showAlert("Error deleting assignment: " + JSON.stringify(serverMsg), 'danger');
+      }
+    });
+
+    modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
   }
 
   viewAssignment(id) {
     const assignment = this.assignments.find((a) => a.assignmentid == id);
     if (!assignment) return;
 
+    // Determine status based on end_date
+    const status = assignment.end_date ? 'Completed' : 'Active';
+    const statusClass = assignment.end_date ? 'bg-completed' : 'bg-active';
+
     const details = `
-      <div class="p-2">
-        <h5>Assignment #${this.escape(assignment.assignmentid)}</h5>
-        <p><strong>Patient:</strong> ${this.escape(assignment.patient_name)}</p>
-        <p><strong>Admission ID:</strong> #${this.escape(assignment.admissionid)}</p>
-        <p><strong>Room:</strong> ${this.escape(assignment.room_no)} (${this.escape(assignment.category_name || "Unknown")})</p>
-        <p><strong>Floor:</strong> ${this.escape(assignment.floor_name || "N/A")}</p>
-        <p><strong>Start Date:</strong> ${this.escape(assignment.start_date || "N/A")}</p>
-        <p><strong>Room Status:</strong> ${this.escape(assignment.room_status || "N/A")}</p>
+      <div class="p-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="mb-0">Assignment #${this.escape(assignment.assignmentid)}</h5>
+          <span class="badge ${statusClass}">${status}</span>
+        </div>
+        <hr>
+        <div class="row">
+          <div class="col-md-6">
+            <p><strong>Patient:</strong> ${this.escape(assignment.patient_name)}</p>
+            <p><strong>Admission ID:</strong> #${this.escape(assignment.admissionid)}</p>
+            <p><strong>Room:</strong> ${this.escape(assignment.room_no)}</p>
+            <p><strong>Room Type:</strong> ${this.escape(assignment.category_name || "Unknown")}</p>
+          </div>
+          <div class="col-md-6">
+            <p><strong>Floor:</strong> ${this.escape(assignment.floor_name || "N/A")}</p>
+            <p><strong>Start Date:</strong> ${this.formatDate(assignment.start_date)}</p>
+            <p><strong>End Date:</strong> ${assignment.end_date ? this.formatDate(assignment.end_date) : 'Active'}</p>
+            <p><strong>Room Status:</strong> ${this.escape(assignment.room_status || "N/A")}</p>
+          </div>
+        </div>
       </div>
     `;
 
@@ -267,6 +382,29 @@ class RoomAssignmentManager {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  showAlert(message, type = 'info') {
+    document.querySelectorAll('.alert.position-fixed').forEach(e => e.remove());
+    const icons = { success: 'check-circle', danger: 'exclamation-triangle', warning: 'exclamation-circle', info: 'info-circle' };
+    const icon = icons[type] || icons.info;
+
+    const alertHtml = `
+      <div class="alert alert-${type} alert-dismissible fade show position-fixed animate__animated animate__fadeIn"
+           style="top: 20px; right: 20px; z-index: 1055; min-width: 350px;">
+        <i class="bi bi-${icon} me-2"></i>${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend', alertHtml);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+      const alert = document.querySelector('.alert.position-fixed');
+      if (alert) {
+        alert.classList.add('animate__fadeOut');
+        setTimeout(() => alert.remove(), 500);
+      }
+    }, 5000);
   }
 }
 

@@ -40,7 +40,8 @@ class RoomAssignmentAPI {
                        ra.admissionid,
                        ra.room_no,
                        ra.start_date,
-                       p.fullname AS patient_name,
+                       ra.end_date,
+                       CONCAT(p.lastname, ', ', p.firstname, ' ', IFNULL(p.middlename, ''), ' ', IFNULL(p.suffix, '')) AS patient_name,
                        r.status AS room_status,
                        rc.name AS category_name,
                        f.name AS floor_name
@@ -92,19 +93,26 @@ class RoomAssignmentAPI {
             $this->conn->beginTransaction();
 
             $stmt = $this->conn->prepare("
-                INSERT INTO Room_Assignment (admissionid, room_no, start_date)
-                VALUES (:admissionid, :room_no, :start_date)
+                INSERT INTO Room_Assignment (admissionid, room_no, start_date, end_date)
+                VALUES (:admissionid, :room_no, :start_date, :end_date)
             ");
             $stmt->execute([
                 ':admissionid' => $data['admissionid'],
                 ':room_no' => $data['room_no'],
-                ':start_date' => $data['start_date'] ?? null
+                ':start_date' => $data['start_date'] ?? null,
+                ':end_date' => $data['end_date'] ?? null
             ]);
 
             $assignmentId = $this->conn->lastInsertId();
 
-            $upd = $this->conn->prepare("UPDATE Room SET status = 'Occupied' WHERE room_no = :room_no");
-            $upd->execute([':room_no' => $data['room_no']]);
+            // If end_date is set and in the past, don't mark room as Occupied
+            $roomStatus = 'Occupied';
+            if (isset($data['end_date']) && strtotime($data['end_date']) <= time()) {
+                $roomStatus = 'Available';
+            }
+            
+            $upd = $this->conn->prepare("UPDATE Room SET status = :status WHERE room_no = :room_no");
+            $upd->execute([':status' => $roomStatus, ':room_no' => $data['room_no']]);
 
             $this->conn->commit();
 
@@ -131,8 +139,8 @@ class RoomAssignmentAPI {
                 $this->respond(["success" => false, "error" => "Invalid Room No"], 422);
             }
 
-            // fetch existing assignment to know current room
-            $fetch = $this->conn->prepare("SELECT room_no FROM Room_Assignment WHERE assignmentid = :assignmentid LIMIT 1");
+            // fetch existing assignment to know current room and end date
+            $fetch = $this->conn->prepare("SELECT room_no, end_date FROM Room_Assignment WHERE assignmentid = :assignmentid LIMIT 1");
             $fetch->execute([':assignmentid' => $data['assignmentid']]);
             $current = $fetch->fetch(PDO::FETCH_ASSOC);
 
@@ -142,6 +150,9 @@ class RoomAssignmentAPI {
 
             $currentRoom = $current['room_no'];
             $newRoom = $data['room_no'];
+            $currentEndDate = $current['end_date'];
+            $newEndDate = $data['end_date'] ?? null;
+            $endDateChanged = $currentEndDate !== $newEndDate;
 
             $this->conn->beginTransaction();
 
@@ -165,23 +176,35 @@ class RoomAssignmentAPI {
             // update assignment
             $stmt = $this->conn->prepare("
                 UPDATE Room_Assignment
-                SET admissionid = :admissionid, room_no = :room_no, start_date = :start_date
+                SET admissionid = :admissionid, room_no = :room_no, start_date = :start_date, end_date = :end_date
                 WHERE assignmentid = :assignmentid
             ");
             $stmt->execute([
                 ':admissionid' => $data['admissionid'],
                 ':room_no' => $data['room_no'],
                 ':start_date' => $data['start_date'] ?? null,
+                ':end_date' => $newEndDate,
                 ':assignmentid' => $data['assignmentid']
             ]);
 
-            // if room changed: set new to Occupied and previous to Available
+            // Determine room status based on end date
+            $roomStatus = 'Occupied';
+            if ($newEndDate && strtotime($newEndDate) <= time()) {
+                $roomStatus = 'Available';
+            }
+
+            // if room changed: set new room status based on end date and previous to Available
             if ($currentRoom !== $newRoom) {
-                $updNew = $this->conn->prepare("UPDATE Room SET status = 'Occupied' WHERE room_no = :room_no");
-                $updNew->execute([':room_no' => $newRoom]);
+                $updNew = $this->conn->prepare("UPDATE Room SET status = :status WHERE room_no = :room_no");
+                $updNew->execute([':status' => $roomStatus, ':room_no' => $newRoom]);
 
                 $updOld = $this->conn->prepare("UPDATE Room SET status = 'Available' WHERE room_no = :room_no");
                 $updOld->execute([':room_no' => $currentRoom]);
+            }
+            // If only end date changed, update room status accordingly
+            else if ($endDateChanged) {
+                $updRoom = $this->conn->prepare("UPDATE Room SET status = :status WHERE room_no = :room_no");
+                $updRoom->execute([':status' => $roomStatus, ':room_no' => $newRoom]);
             }
 
             $this->conn->commit();

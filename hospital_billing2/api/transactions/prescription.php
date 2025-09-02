@@ -18,7 +18,7 @@ class PrescriptionAPI {
         return (new Database())->connect();
     }
 
-    private function respond($data, $status = 200) {
+    public function respond($data, $status = 200) {
         http_response_code($status);
         echo json_encode($data);
         exit;
@@ -54,7 +54,7 @@ class PrescriptionAPI {
             $conn = $this->connect();
             $sql = "SELECT p.*, 
                            a.admissionid,
-                           pt.fullname as patient_name,
+                           CONCAT(pt.lastname, ', ', pt.firstname, ' ', IFNULL(pt.middlename, ''), ' ', IFNULL(pt.suffix, '')) as patient_name,
                            m.brand_name as medicine_name,
                            d.fullname as doctor_name,
                            CASE 
@@ -75,7 +75,6 @@ class PrescriptionAPI {
                     JOIN Medicine m ON p.medicineid = m.medicineid
                     JOIN Doctor d ON p.doctorid = d.doctorid
                     WHERE a.deleted_at IS NULL 
-                      AND pt.deleted_at IS NULL 
                       AND m.is_deleted = 0 
                       AND d.deleted_at IS NULL
                     ORDER BY p.prescription_date DESC";
@@ -95,9 +94,21 @@ class PrescriptionAPI {
             $conn = $this->connect();
             $stmt = $conn->prepare("SELECT p.*, 
                                           a.admissionid,
-                                          pt.fullname as patient_name,
+                                          CONCAT(pt.lastname, ', ', pt.firstname, ' ', IFNULL(pt.middlename, ''), ' ', IFNULL(pt.suffix, '')) as patient_name,
                                           m.brand_name as medicine_name,
-                                          d.fullname as doctor_name
+                                          d.fullname as doctor_name,
+                                          CASE 
+                                              WHEN p.status = 'Pending' THEN 'badge bg-warning'
+                                              WHEN p.status = 'Dispensed' THEN 'badge bg-success'
+                                              WHEN p.status = 'Canceled' THEN 'badge bg-danger'
+                                              ELSE 'badge bg-secondary'
+                                          END as status_class,
+                                          CASE 
+                                              WHEN p.status = 'Pending' THEN 'Pending'
+                                              WHEN p.status = 'Dispensed' THEN 'Dispensed'
+                                              WHEN p.status = 'Canceled' THEN 'Canceled'
+                                              ELSE p.status
+                                          END as status_label
                                    FROM Prescription p
                                    JOIN Admission a ON p.admissionid = a.admissionid
                                    JOIN Patient pt ON a.patientid = pt.patientid
@@ -124,9 +135,8 @@ class PrescriptionAPI {
             $conn = $this->connect();
             
             // Validate admission exists and is active
-            $stmt = $conn->prepare("SELECT a.admissionid, pt.fullname 
+            $stmt = $conn->prepare("SELECT a.admissionid 
                                    FROM Admission a 
-                                   JOIN Patient pt ON a.patientid = pt.patientid 
                                    WHERE a.admissionid = :admissionid AND a.status = 'Admitted'");
             $stmt->execute([":admissionid" => $data['admissionid']]);
             $admission = $stmt->fetch(PDO::FETCH_ASSOC);
