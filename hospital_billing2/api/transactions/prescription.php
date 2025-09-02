@@ -159,6 +159,18 @@ class PrescriptionAPI {
                 $this->respond(["success" => false, "error" => "Invalid doctor"], 422);
             }
             
+            // Check if a prescription for this admission and medicine already exists
+            $stmt = $conn->prepare("SELECT prescriptionid FROM Prescription 
+                                   WHERE admissionid = :admissionid AND medicineid = :medicineid");
+            $stmt->execute([
+                ":admissionid" => $data['admissionid'],
+                ":medicineid" => $data['medicineid']
+            ]);
+            
+            if ($stmt->fetch()) {
+                $this->respond(["success" => false, "error" => "A prescription for this medicine already exists for this admission"], 422);
+            }
+            
             $sql = "INSERT INTO Prescription (admissionid, medicineid, doctorid, quantity, status, prescription_date) 
                     VALUES (:admissionid, :medicineid, :doctorid, :quantity, :status, NOW())";
             
@@ -187,10 +199,12 @@ class PrescriptionAPI {
             
             $conn = $this->connect();
             
-            // Check if prescription exists
-            $stmt = $conn->prepare("SELECT prescriptionid FROM Prescription WHERE prescriptionid = :id");
+            // Check if prescription exists and get its current data
+            $stmt = $conn->prepare("SELECT prescriptionid, admissionid, medicineid FROM Prescription WHERE prescriptionid = :id");
             $stmt->execute([":id" => $data['prescriptionid']]);
-            if (!$stmt->fetch()) {
+            $prescription = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$prescription) {
                 $this->respond(["success" => false, "error" => "Prescription not found"], 404);
             }
             
@@ -206,6 +220,21 @@ class PrescriptionAPI {
             $stmt->execute([":doctorid" => $data['doctorid']]);
             if (!$stmt->fetch()) {
                 $this->respond(["success" => false, "error" => "Invalid doctor"], 422);
+            }
+            
+            // If medicine is being changed, check if a prescription for this admission and new medicine already exists
+            if ($prescription['medicineid'] != $data['medicineid']) {
+                $stmt = $conn->prepare("SELECT prescriptionid FROM Prescription 
+                                       WHERE admissionid = :admissionid AND medicineid = :medicineid AND prescriptionid != :prescriptionid");
+                $stmt->execute([
+                    ":admissionid" => $prescription['admissionid'],
+                    ":medicineid" => $data['medicineid'],
+                    ":prescriptionid" => $data['prescriptionid']
+                ]);
+                
+                if ($stmt->fetch()) {
+                    $this->respond(["success" => false, "error" => "A prescription for this medicine already exists for this admission"], 422);
+                }
             }
             
             $sql = "UPDATE Prescription 

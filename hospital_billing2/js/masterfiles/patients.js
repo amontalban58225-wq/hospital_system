@@ -1,7 +1,7 @@
 class PatientManager {
   constructor() {
     this.patientsData = [];
-    this.baseApiUrl = 'http://localhost:8000/api';
+    this.baseApiUrl = 'http://localhost/hospital_billing2/api';
     this.init();
   }
 
@@ -86,16 +86,16 @@ class PatientManager {
     }
 
     tbody.innerHTML = this.patientsData.map(p => {
-      const fullName = `${p.lastname}, ${p.firstname}${p.middlename ? ' ' + p.middlename : ''}${p.suffix ? ', ' + p.suffix : ''}`;
+      const fullName = `${p.lastname}, ${p.firstname}${p.middlename ? ' ' + p.middlename : ''}`;
       return `
       <tr>
         <td><strong>${fullName}</strong></td>
-        <td>${p.gender}</td>
-        <td>${p.birthdate || ''}</td>
-        <td>${p.civil_status || ''}</td>
+      
+
+
         <td><i class="bi bi-telephone me-1"></i>${p.contact_no || ''}</td>
         <td>${p.email || ''}</td>
-        <td>${p.address || ''}</td>
+
         <td>
           <div style="display: flex; flex-direction: row; gap: 8px; flex-wrap: nowrap;">
             <button class="btn btn-sm btn-info" style="flex-shrink: 0;" data-id="${p.patientid}" data-action="view" title="View Patient">
